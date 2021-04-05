@@ -1,4 +1,5 @@
 {-# LANGUAGE  GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE  DeriveFunctor #-}
 module Main where
 
 import Control.Monad (when, forM_)
@@ -7,8 +8,9 @@ import System.IO (stdin, hSetEcho, hSetBuffering, hReady, BufferMode (NoBufferin
 import Control.Monad.State.Strict (StateT, get, modify, runStateT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Map as Map
-import ViewUtils (clearScreen, showInRectangle, clearRectangle, showInGrid, drawGrid, highlightCell, printFromBottom)
 import Prelude hiding (log)
+import ViewUtils (clearScreen, showInRectangle, clearRectangle, showInGrid, drawGrid, highlightCell, printFromBottom)
+import Free (Free(..), liftF, foldFree)
 
 data RowData = Row { smth :: String } deriving Eq
 
@@ -45,133 +47,109 @@ addDebugMessagesListener :: Monad m => ([String] -> m ()) -> AppStateListenersDa
 addDebugMessagesListener listener (AppStateListeners _rowsListeners _activeCellYListeners debugMessagesListeners) =
   AppStateListeners _rowsListeners _activeCellYListeners (listener:debugMessagesListeners)
 
--- class EditableListApp m where
---   getList :: m [RowData]
---   getActiveCellY :: m (Maybe Int)
---   getLogs :: m [String]
+
+-- data EditableListOps a = GetList                          ([RowData]   -> EditableListOps a)
+--                        | GetActiveCellY                   ((Maybe Int) -> EditableListOps a)
+--                        | GetLogs                          ([String]    -> EditableListOps a)
+--                        | UpdateList           [RowData]   (EditableListOps a)
+--                        | UpdateActiveCellY    (Maybe Int) (EditableListOps a)
+--                        | Log                  String      (EditableListOps a)
+-- --                       | LiftIO               (IO ())     (EditableListOps a)
+--                        | Done                 a
+
+-- --instance Functor (EditableListOps m) where
+-- instance Functor EditableListOps where
+--   fmap f (GetList k)              = GetList        $ \lst      -> fmap f (k lst)
+--   fmap f (GetActiveCellY k)       = GetActiveCellY $ \maybeInt -> fmap f (k maybeInt)
+--   fmap f (GetLogs k)              = GetLogs        $ \logs     -> fmap f (k logs)
+--   fmap f (UpdateList lst op)      = UpdateList        lst (fmap f op)
+--   fmap f (UpdateActiveCellY y op) = UpdateActiveCellY y   (fmap f op)
+--   fmap f (Log msg op)             = Log               msg (fmap f op)
+-- --  fmap f (LiftIO a op)            = LiftIO            a   (fmap f op)
+--   fmap f (Done a)                 = Done (f a)
 -- 
---   updateList :: [RowData] -> m ()
---   updateActiveCellY :: Maybe Int -> m ()
---   log :: String -> m ()
+-- --instance Applicative (EditableListOps m) where
+-- instance Applicative EditableListOps where
+--   pure = Done
+-- --  (GetList h) <*> (GetList g) = GetList $ \lst ->
+-- --                                             let f = h lst
+-- --                                                 x = g lst
+-- --                                              in f <*> x
+-- --  (GetList h) <*> (GetActiveCellY g)
+-- --  (GetList h) <*> op
+-- 
+--   (GetList h)             <*> g = GetList        $ \lst  -> (h  lst) <*> g
+--   (GetActiveCellY h)      <*> g = GetActiveCellY $ \y    -> (h    y) <*> g
+--   (GetLogs h)             <*> g = GetLogs        $ \logs -> (h logs) <*> g
+--   (UpdateList lst h)      <*> g = UpdateList        lst (h <*> g)
+--   (UpdateActiveCellY y h) <*> g = UpdateActiveCellY   y (h <*> g)
+--   (Log msg h)             <*> g = Log               msg (h <*> g)
+-- --  (LiftIO a)              <*> g = LiftIO            a   (h <*> g)
+--   (Done a)                <*> g = fmap a g
+-- 
+-- --instance Monad (EditableListOps m) where
+-- instance Monad EditableListOps where
+--   return = Done
+--   (GetList h)             >>= f = GetList        $ \lst  -> (h  lst) >>= f
+--   (GetActiveCellY h)      >>= f = GetActiveCellY $ \y    -> (h    y) >>= f
+--   (GetLogs h)             >>= f = GetLogs        $ \logs -> (h logs) >>= f
+--   (UpdateList lst h)      >>= f = UpdateList        lst (h >>= f)
+--   (UpdateActiveCellY y h) >>= f = UpdateActiveCellY   y (h >>= f)
+--   (Log msg h)             >>= f = Log               msg (h >>= f)
+-- --  (LiftIO a h)            >>= f = LiftIO              a (h >>= f)
+--   (Done x)                >>= f = f x
 
--- data EditableListOps m a = GetList                          (m [RowData]   -> EditableListOps m a)
---                          | GetActiveCellY                   (m (Maybe Int) -> EditableListOps m a)
---                          | GetLogs                          (m [String]    -> EditableListOps m a)
---                          | UpdateList           [RowData]   (m ()          -> EditableListOps m a)
---                          | UpdateActiveCellY    (Maybe Int) (m ()          -> EditableListOps m a)
---                          | Log                  String      (m ()          -> EditableListOps m a)
+data EditableListOpsF r = GetList                          ([RowData]   -> r)
+                        | GetActiveCellY                   ((Maybe Int) -> r)
+                        | GetLogs                          ([String]    -> r)
+                        | UpdateList           [RowData]   r
+                        | UpdateActiveCellY    (Maybe Int) r
+                        | Log                  String      r
+                        deriving Functor
 
--- instance (Functor m) => Functor EditableListOps m a where
---   fmap f (GetList k) = GetList $ \listInFunctor -> fmap f listInFunctor
---   fmap f (GetActiveCellY k) = GetActiveCellY $ \maybeIntInFunctor -> fmap f maybeIntInFunctor
---   fmap f (GetLogs k) = GetLogs $ \logsInFunctor -> fmap f logsInFunctor
---   fmap f (UpdateList lst k) = UpdateList lst $ \ ???
+getList :: Free EditableListOpsF [RowData]
+getList = liftF (GetList id) -- or Free (GetList return)
 
--- data EditableListOps m a = GetList                          ([RowData]   -> EditableListOps m a)
---                          | GetActiveCellY                   ((Maybe Int) -> EditableListOps m a)
---                          | GetLogs                          ([String]    -> EditableListOps m a)
---                          | UpdateList           [RowData]   (EditableListOps m a)
---                          | UpdateActiveCellY    (Maybe Int) (EditableListOps m a)
---                          | Log                  String      (EditableListOps m a)
---                          | Done                 a
+getActiveCellY :: Free EditableListOpsF (Maybe Int)
+getActiveCellY = liftF (GetActiveCellY id) -- or Free (GetActiveCellY return)
 
-data EditableListOps a = GetList                          ([RowData]   -> EditableListOps a)
-                       | GetActiveCellY                   ((Maybe Int) -> EditableListOps a)
-                       | GetLogs                          ([String]    -> EditableListOps a)
-                       | UpdateList           [RowData]   (EditableListOps a)
-                       | UpdateActiveCellY    (Maybe Int) (EditableListOps a)
-                       | Log                  String      (EditableListOps a)
---                       | LiftIO               (IO ())     (EditableListOps a)
-                       | Done                 a
+getLogs :: Free EditableListOpsF [String]
+getLogs = liftF (GetLogs id) -- or Free (GetLogs return)
 
---instance Functor (EditableListOps m) where
-instance Functor EditableListOps where
-  fmap f (GetList k)              = GetList        $ \lst      -> fmap f (k lst)
-  fmap f (GetActiveCellY k)       = GetActiveCellY $ \maybeInt -> fmap f (k maybeInt)
-  fmap f (GetLogs k)              = GetLogs        $ \logs     -> fmap f (k logs)
-  fmap f (UpdateList lst op)      = UpdateList        lst (fmap f op)
-  fmap f (UpdateActiveCellY y op) = UpdateActiveCellY y   (fmap f op)
-  fmap f (Log msg op)             = Log               msg (fmap f op)
---  fmap f (LiftIO a op)            = LiftIO            a   (fmap f op)
-  fmap f (Done a)                 = Done (f a)
+updateList :: [RowData] -> Free EditableListOpsF ()
+updateList l = liftF (UpdateList l ()) -- or Free (UpdateList l ())
 
---instance Applicative (EditableListOps m) where
-instance Applicative EditableListOps where
-  pure = Done
---  (GetList h) <*> (GetList g) = GetList $ \lst ->
---                                             let f = h lst
---                                                 x = g lst
---                                              in f <*> x
---  (GetList h) <*> (GetActiveCellY g)
---  (GetList h) <*> op
+updateActiveCellY :: (Maybe Int) -> Free EditableListOpsF ()
+updateActiveCellY y = liftF (UpdateActiveCellY y ()) -- or Free (UpdateActiveCellY y ())
 
-  (GetList h)             <*> g = GetList        $ \lst  -> (h  lst) <*> g
-  (GetActiveCellY h)      <*> g = GetActiveCellY $ \y    -> (h    y) <*> g
-  (GetLogs h)             <*> g = GetLogs        $ \logs -> (h logs) <*> g
-  (UpdateList lst h)      <*> g = UpdateList        lst (h <*> g)
-  (UpdateActiveCellY y h) <*> g = UpdateActiveCellY   y (h <*> g)
-  (Log msg h)             <*> g = Log               msg (h <*> g)
---  (LiftIO a)              <*> g = LiftIO            a   (h <*> g)
-  (Done a)                <*> g = fmap a g
-
---instance Monad (EditableListOps m) where
-instance Monad EditableListOps where
-  return = Done
-  (GetList h)             >>= f = GetList        $ \lst  -> (h  lst) >>= f
-  (GetActiveCellY h)      >>= f = GetActiveCellY $ \y    -> (h    y) >>= f
-  (GetLogs h)             >>= f = GetLogs        $ \logs -> (h logs) >>= f
-  (UpdateList lst h)      >>= f = UpdateList        lst (h >>= f)
-  (UpdateActiveCellY y h) >>= f = UpdateActiveCellY   y (h >>= f)
-  (Log msg h)             >>= f = Log               msg (h >>= f)
---  (LiftIO a h)            >>= f = LiftIO              a (h >>= f)
-  (Done x)                >>= f = f x
-
-getList :: EditableListOps [RowData]
-getList = GetList return
-
-getActiveCellY :: EditableListOps (Maybe Int)
-getActiveCellY = GetActiveCellY return
-
-getLogs :: EditableListOps [String]
-getLogs = GetLogs return
-
-updateList :: [RowData] -> EditableListOps ()
-updateList l = UpdateList l $ return ()
-
-updateActiveCellY :: (Maybe Int) -> EditableListOps ()
-updateActiveCellY y = UpdateActiveCellY y $ return ()
-
-log :: String -> EditableListOps ()
-log msg = Log msg $ return ()
-
---instance MonadIO EditableListOps where
---  liftIO a = LiftIO a $ return ()
+log :: String -> Free EditableListOpsF ()
+log msg = liftF (Log msg ()) -- or Free (Log msg ())
 
 newtype DictStateHolder a = Dict (StateT (AppStateData DictStateHolder) IO a) deriving (Functor, Applicative, Monad, MonadIO)
 
-interpret :: EditableListOps a -> DictStateHolder a
-interpret (Done x) = return x
-interpret (GetList k) = do lst <- rows <$> (Dict get)
-                           interpret (k lst)
-interpret (GetActiveCellY k) = do y <- activeCellY <$> (Dict get)
-                                  interpret (k y)
-interpret (GetLogs k) = do logs <- debugMessages <$> (Dict get)
-                           interpret (k logs)
-interpret (UpdateList l k) = do Dict $ modify $ \s -> s { rows = l }
-                                reacts <- (rowsListeners . listeners) <$> (Dict get)
-                                forM_ reacts ($ l)
-                                interpret k
-interpret (UpdateActiveCellY y k) = do Dict $ modify $ \s -> s { activeCellY = y }
-                                       reacts <- (activeCellYListeners . listeners) <$> (Dict get)
-                                       forM_ reacts ($ y)
-                                       interpret k
-interpret (Log msg k) = do Dict $ modify $ \s -> s { debugMessages = take debugLinesCount (msg:(debugMessages s)) }
-                           logs <- debugMessages <$> (Dict get)
-                           reacts <- (debugMessagesListeners . listeners) <$> (Dict get)
-                           forM_ reacts ($ logs)
-                           interpret k
--- interpret (LiftIO a k) = do liftIO a
---                             interpret k
+interpret' :: EditableListOpsF a -> DictStateHolder a
+interpret' (GetList k) = do lst <- rows <$> (Dict get)
+                            return (k lst)
+interpret' (GetActiveCellY k) = do y <- activeCellY <$> (Dict get)
+                                   return (k y)
+interpret' (GetLogs k) = do logs <- debugMessages <$> (Dict get)
+                            return (k logs)
+interpret' (UpdateList l k) = do Dict $ modify $ \s -> s { rows = l }
+                                 reacts <- (rowsListeners . listeners) <$> (Dict get)
+                                 forM_ reacts ($ l)
+                                 return k
+interpret' (UpdateActiveCellY y k) = do Dict $ modify $ \s -> s { activeCellY = y }
+                                        reacts <- (activeCellYListeners . listeners) <$> (Dict get)
+                                        forM_ reacts ($ y)
+                                        return k
+interpret' (Log msg k) = do Dict $ modify $ \s -> s { debugMessages = take debugLinesCount (msg:(debugMessages s)) }
+                            logs <- debugMessages <$> (Dict get)
+                            reacts <- (debugMessagesListeners . listeners) <$> (Dict get)
+                            forM_ reacts ($ logs)
+                            return k
+
+interpret :: Free EditableListOpsF a -> DictStateHolder a
+interpret = foldFree interpret'
 
 dictStateAction :: AppStateData DictStateHolder -> DictStateHolder a -> IO ()
 dictStateAction state (Dict action) = do
@@ -198,7 +176,7 @@ main = do
     initialState :: AppStateData DictStateHolder
     initialState = AppState [] Nothing [] initListeners
 
-    initRows :: EditableListOps ()
+    initRows :: Free EditableListOpsF ()
     initRows = updateList initialRows
 
     initListeners =

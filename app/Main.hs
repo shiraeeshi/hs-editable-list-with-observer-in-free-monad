@@ -86,16 +86,16 @@ interpret' (GetLogs k) = do logs <- debugMessages <$> (Dict get)
                             return (k logs)
 interpret' (UpdateList l k) = do Dict $ modify $ \s -> s { rows = l }
                                  reacts <- (rowsListeners . listeners) <$> (Dict get)
-                                 forM_ reacts ($ l)
+                                 forM_ reacts ($ l) -- the same as forM_ reacts $ \react -> react l
                                  return k
 interpret' (UpdateActiveCellY y k) = do Dict $ modify $ \s -> s { activeCellY = y }
                                         reacts <- (activeCellYListeners . listeners) <$> (Dict get)
-                                        forM_ reacts ($ y)
+                                        forM_ reacts ($ y) -- the same as forM_ reacts $ \react -> react y
                                         return k
 interpret' (Log msg k) = do Dict $ modify $ \s -> s { debugMessages = take debugLinesCount (msg:(debugMessages s)) }
                             logs <- debugMessages <$> (Dict get)
                             reacts <- (debugMessagesListeners . listeners) <$> (Dict get)
-                            forM_ reacts ($ logs)
+                            forM_ reacts ($ logs) -- the same as forM_ reacts $ \react -> react logs
                             return k
 
 interpret :: Free EditableListOpsF a -> DictStateHolder a
@@ -129,6 +129,12 @@ main = do
     initRows :: Free EditableListOpsF ()
     initRows = updateList initialRows
 
+    initListeners :: AppStateListenersData DictStateHolder
+    --initListeners =
+    --    addRowsListener (mainRowsListener)
+    --    (addActiveCellYListener (activeCellYListener)
+    --    (addDebugMessagesListener (debugMessagesListener)
+    --    (empty)))
     initListeners =
         addRowsListener (mainRowsListener)
         $ addActiveCellYListener (activeCellYListener)
@@ -137,6 +143,7 @@ main = do
       where
         empty = AppStateListeners [] [] []
 
+    mainRowsListener :: [RowData] -> DictStateHolder ()
     mainRowsListener rows = do
       activeCellCoords <- fmap (\y -> (0, y)) <$> (interpret $ getActiveCellY)
       liftIO $ showInGrid
@@ -148,6 +155,7 @@ main = do
                  (map (\row -> [smth row]) rows)
       interpret $ log "updated rows"
 
+    activeCellYListener :: Maybe Int -> DictStateHolder ()
     activeCellYListener activeCellY = do
       let activeCellCoords = fmap (\y -> (0, y)) activeCellY
       liftIO $ drawGrid xUpperLeft yUpperLeft columnWidth columnCount rowCount
@@ -157,12 +165,14 @@ main = do
           liftIO $ highlightCell xUpperLeft yUpperLeft columnWidth columnCount rowCount coordsPair
           interpret $ log "highlighted cell"
 
+    debugMessagesListener :: [String] -> DictStateHolder ()
     debugMessagesListener debugMessages = do
       liftIO $ printFromBottom
                  xUpperLeft
                  (yUpperLeft+12+debugLinesCount)
                  debugMessages
 
+    loop :: DictStateHolder ()
     loop = do
       key <- liftIO $ getKey
       when (key /= "\ESC") $ do
@@ -175,7 +185,7 @@ main = do
                     Just y -> Just $ max 0 (y-1)
                     Nothing -> Just 0
               interpret $ updateActiveCellY newActiveCellY
-              interpret $ log $ "up, " ++ show(newActiveCellY)
+              interpret $ log $ "↑ " ++ show(newActiveCellY)
               loop
           "\ESC[B" -> do -- down
               activeCellY <- interpret $ getActiveCellY
@@ -185,13 +195,15 @@ main = do
                     Just y -> Just $ min (rowCount-1) (y+1)
                     Nothing -> Just 0
               interpret $ updateActiveCellY newActiveCellY
-              interpret $ log $ "down, " ++ show(newActiveCellY)
+              interpret $ log $ "↓ " ++ show(newActiveCellY)
               loop
           "\n" -> do -- enter
               activeCellY <- interpret $ getActiveCellY
               rows <- interpret $ getList
                 
-              let eitherValue =
+              let
+                  eitherValue :: Either String String
+                  eitherValue =
                     case activeCellY of
                       Nothing -> Left "there's no selected cell"
                       Just cellIndex ->
@@ -199,7 +211,8 @@ main = do
                           then Left $ "index out of bounds: " ++ (show cellIndex)
                           else Right $ smth $ rows !! cellIndex
 
-              let showEditField value = do
+                  showEditField :: String -> DictStateHolder ()
+                  showEditField value = do
                     let
                       txt = "edit cell value:"
                       lentxt = length txt

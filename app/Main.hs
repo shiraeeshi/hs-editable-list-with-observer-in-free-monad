@@ -83,36 +83,37 @@ log msg = liftF (Log msg ()) -- or Free (Log msg ())
 instance MonadIO (Free EditableListOpsF) where
   liftIO a = liftF (LiftIO a id) -- or Free (LiftIO a id)
 
-newtype DictStateHolder a = Dict (StateT (AppStateData DictStateHolder) IO a) deriving (Functor, Applicative, Monad, MonadIO)
+newtype StateHolder a = StateHolder (StateT (AppStateData StateHolder) IO a)
+  deriving (Functor, Applicative, Monad, MonadIO)
 
-interpret' :: EditableListOpsF a -> DictStateHolder a
-interpret' (GetList k) = do lst <- rows <$> (Dict get)
+interpret' :: EditableListOpsF a -> StateHolder a
+interpret' (GetList k) = do lst <- rows <$> (StateHolder get)
                             return (k lst)
-interpret' (GetActiveCellY k) = do y <- activeCellY <$> (Dict get)
+interpret' (GetActiveCellY k) = do y <- activeCellY <$> (StateHolder get)
                                    return (k y)
-interpret' (GetLogs k) = do logs <- debugMessages <$> (Dict get)
+interpret' (GetLogs k) = do logs <- debugMessages <$> (StateHolder get)
                             return (k logs)
-interpret' (UpdateList l k) = do Dict $ modify $ \s -> s { rows = l }
-                                 reacts <- (rowsListeners . listeners) <$> (Dict get)
+interpret' (UpdateList l k) = do StateHolder $ modify $ \s -> s { rows = l }
+                                 reacts <- (rowsListeners . listeners) <$> (StateHolder get)
                                  forM_ reacts ($ l) -- same as forM_ reacts $ \react -> react l
                                  return k
-interpret' (UpdateActiveCellY y k) = do Dict $ modify $ \s -> s { activeCellY = y }
-                                        reacts <- (activeCellYListeners . listeners) <$> (Dict get)
+interpret' (UpdateActiveCellY y k) = do StateHolder $ modify $ \s -> s { activeCellY = y }
+                                        reacts <- (activeCellYListeners . listeners) <$> (StateHolder get)
                                         forM_ reacts ($ y) -- same as forM_ reacts $ \react -> react y
                                         return k
-interpret' (Log msg k) = do Dict $ modify $ \s -> s { debugMessages = take debugLinesCount (msg:(debugMessages s)) }
-                            logs <- debugMessages <$> (Dict get)
-                            reacts <- (debugMessagesListeners . listeners) <$> (Dict get)
+interpret' (Log msg k) = do StateHolder $ modify $ \s -> s { debugMessages = take debugLinesCount (msg:(debugMessages s)) }
+                            logs <- debugMessages <$> (StateHolder get)
+                            reacts <- (debugMessagesListeners . listeners) <$> (StateHolder get)
                             forM_ reacts ($ logs) -- same as forM_ reacts $ \react -> react logs
                             return k
 interpret' (LiftIO a k) = do v <- liftIO a
                              return (k v)
 
-interpret :: Free EditableListOpsF a -> DictStateHolder a
+interpret :: Free EditableListOpsF a -> StateHolder a
 interpret = foldFree interpret'
 
-dictStateAction :: AppStateData DictStateHolder -> DictStateHolder a -> IO ()
-dictStateAction state (Dict action) = do
+dictStateAction :: AppStateData StateHolder -> StateHolder a -> IO ()
+dictStateAction state (StateHolder action) = do
   runStateT action state
   return ()
 
@@ -134,13 +135,13 @@ main = do
     columnWidth = 14
     rowCount = length initialRows
 
-    initialState :: AppStateData DictStateHolder
+    initialState :: AppStateData StateHolder
     initialState = AppState [] Nothing [] initListeners
 
     initRows :: Free EditableListOpsF ()
     initRows = updateList initialRows
 
-    initListeners :: AppStateListenersData DictStateHolder
+    initListeners :: AppStateListenersData StateHolder
     --initListeners =
     --    addRowsListener (interpret . mainRowsListener)
     --    (addActiveCellYListener (interpret . activeCellYListener)

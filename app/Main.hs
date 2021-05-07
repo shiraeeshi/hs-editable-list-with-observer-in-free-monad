@@ -112,8 +112,8 @@ interpret' (LiftIO a k) = do v <- liftIO a
 interpret :: Free EditableListOpsF a -> StateHolder a
 interpret = foldFree interpret'
 
-dictStateAction :: AppStateData StateHolder -> StateHolder a -> IO ()
-dictStateAction state (StateHolder action) = do
+performStateAction :: AppStateData StateHolder -> StateHolder a -> IO ()
+performStateAction state (StateHolder action) = do
   runStateT action state
   return ()
 
@@ -124,8 +124,8 @@ main = do
   hSetBuffering stdin NoBuffering
   hSetEcho stdin False
   clearScreen
-  --dictStateAction initialState (interpret (do ... ))
-  dictStateAction initialState $ interpret $ do
+  --performStateAction initialState (interpret (do ... ))
+  performStateAction initialState $ interpret $ do
     initRows
     loop
   where
